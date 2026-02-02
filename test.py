@@ -1,7 +1,6 @@
 import pynput.mouse as mouse
 import numpy as np
 import matplotlib.pyplot as plt
-import threading
 import time
 
 class MouseSensorCalibrator:
@@ -9,13 +8,14 @@ class MouseSensorCalibrator:
         self.points = []
         self.is_recording = False
         self.data_ready = False
-        print("=== 鼠标传感器角度校准程序 (左键版) ===")
+        self.listener = None  # 将listener存为实例变量以便停止
+        
+        print("=== 鼠标传感器角度校准程序 (单次测试版) ===")
         print("操作说明：")
         print("1. 按住【鼠标左键】不放。")
         print("2. 凭肌肉记忆，尝试水平左右快速移动鼠标。")
         print("3. 松开【鼠标左键】。")
-        print("4. 程序将计算角度并显示轨迹图。")
-        print("5. 关闭弹出的图表窗口后，可以继续进行下一次测试。")
+        print("4. 查看结果，关闭图表窗口后程序将自动退出。")
         print("----------------------------------")
 
     def on_move(self, x, y):
@@ -23,19 +23,19 @@ class MouseSensorCalibrator:
             self.points.append((x, y))
 
     def on_click(self, x, y, button, pressed):
-        # === 修改点：检测左键 ===
         if button == mouse.Button.left:
             if pressed:
-                self.points = [] # 清空旧数据
+                self.points = [] 
                 self.is_recording = True
                 print("\n[开始记录] 请左右移动鼠标...")
             else:
                 self.is_recording = False
-                # 只有数据点足够多才计算（防止点击关闭窗口时误触发）
                 if len(self.points) > 10: 
                     self.data_ready = True
+                    # 这里也可以选择返回 False 来停止监听，
+                    # 但为了确保主线程能处理绘图，我们在主循环里停止比较稳妥
                 else:
-                    pass
+                    print("[提示] 移动距离太短，请重新按住测试。")
 
     def calculate_and_plot(self):
         if not self.points:
@@ -49,13 +49,11 @@ class MouseSensorCalibrator:
         y_visual = -y 
 
         try:
-            # 线性回归拟合
             slope, intercept = np.polyfit(x, y, 1)
         except:
             print("计算出错，可能是数据异常。")
             return
 
-        # 计算角度
         angle_rad = np.arctan(slope)
         angle_deg = np.degrees(angle_rad)
 
@@ -85,20 +83,34 @@ class MouseSensorCalibrator:
         plt.axis('equal')
         plt.legend()
         plt.grid(True)
-        plt.show()
+        print("\n[完成] 正在显示图表，关闭窗口后程序退出。")
+        plt.show() # 这是一个阻塞函数，直到你关闭窗口代码才会继续往下走
 
     def run(self):
-        listener = mouse.Listener(on_move=self.on_move, on_click=self.on_click)
-        listener.start()
+        # 启动监听
+        self.listener = mouse.Listener(on_move=self.on_move, on_click=self.on_click)
+        self.listener.start()
+
         try:
             while True:
+                # 只有当采集到有效数据后才进入处理逻辑
                 if self.data_ready:
+                    # 1. 停止监听鼠标，防止后续操作干扰
+                    self.listener.stop()
+                    
+                    # 2. 计算并绘图 (plt.show会卡住在这里直到窗口关闭)
                     self.calculate_and_plot()
-                    self.data_ready = False
-                time.sleep(0.1)
+                    
+                    # 3. 退出循环，结束程序
+                    break 
+                
+                time.sleep(0.01)
         except KeyboardInterrupt:
-            listener.stop()
-            print("\n程序已退出。")
+            pass
+        finally:
+            if self.listener.is_alive():
+                self.listener.stop()
+            print("程序已结束。")
 
 if __name__ == "__main__":
     calibrator = MouseSensorCalibrator()
